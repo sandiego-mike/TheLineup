@@ -435,13 +435,8 @@ export function App() {
         aiCollapsed={aiCollapsed}
         setAiCollapsed={setAiCollapsed}
         alertCount={activeCoachItems.filter(i => i.level !== 'good').length}
-        canGenerate={canGenerate}
-        busy={busy}
         onPublish={publish}
         onUnlock={unlockSchedule}
-        mode={mode}
-        setMode={setMode}
-        onGenerate={generate}
         canExport={canExport}
         onCsv={downloadCsv}
         onJson={downloadJson}
@@ -522,6 +517,9 @@ export function App() {
             borrowMoves={borrowMoves}
             isLocked={isLocked}
             canExport={canExport}
+            canGenerate={canGenerate}
+            busy={busy}
+            onGenerate={generate}
             onApplyRecommendation={applyRecommendation}
             onViewShift={(item) => {
               const shift = schedule.shifts.find(s => s.id === item.shiftId);
@@ -604,8 +602,7 @@ export function App() {
 function AppHeader({
   schedule, bootstrap, userId, setUserId, effectiveDepartment, departments,
   setDepartmentFilter, isLocked, aiCollapsed, setAiCollapsed, alertCount,
-  canGenerate, busy, onPublish, onUnlock, mode, setMode, onGenerate,
-  canExport, onCsv, onJson, onCopy
+  onPublish, onUnlock, canExport, onCsv, onJson, onCopy
 }) {
   const [showExport, setShowExport] = useState(false);
   const weekLabel = formatWeekLabel(schedule.schedule.week_start);
@@ -646,28 +643,6 @@ function AppHeader({
         {isLocked ? <LockKeyhole size={13} /> : <Unlock size={13} />}
         {isLocked ? 'Published' : 'Draft'}
       </span>
-
-      <div className="mode-tabs" title="Generation mode">
-        {modes.map(([key, label, tip]) => (
-          <button
-            key={key}
-            title={tip}
-            className={mode === key ? 'active' : ''}
-            onClick={() => setMode(key)}
-          >
-            {key === 'fairness' ? 'Fair' : key === 'balanced' ? 'Balanced' : 'Senior'}
-          </button>
-        ))}
-      </div>
-
-      <button
-        className="btn-outline"
-        disabled={busy || !canGenerate || isLocked}
-        onClick={onGenerate}
-        title="Auto-build best lineup"
-      >
-        <RefreshCw size={14} /> {busy ? 'Building…' : 'Auto-Build'}
-      </button>
 
       {isLocked ? (
         <button className="btn-outline" disabled={!canGenerate || busy} onClick={onUnlock}>
@@ -1047,7 +1022,7 @@ function WeekGrid({ shifts, shiftTypeFilter, dragEmployeeId, canEdit, selectedSh
             <div key={day} className="day-col-header">
               <span className="day-name">{day.slice(0, 3).toUpperCase()}</span>
               <span className={`day-status ${tone}`}>
-                {openCount > 0 ? `${openCount} open` : `${ready}% ready`}
+                {openCount > 0 ? `${openCount} open` : 'Full'}
               </span>
             </div>
           );
@@ -1134,8 +1109,10 @@ function ShiftCell({ shift, canEdit, dragEmployeeId, selected, onClick, onDrop, 
 
       {openCount > 0 && (
         <div className="open-roles-indicator">
-          <AlertTriangle size={11} />
-          <span>{openCount} open {openCount === 1 ? 'role' : 'roles'}</span>
+          {buildSlots(shift).slice(shift.assignments.length, shift.assignments.length + 2).map(role => (
+            <span key={role} className="open-role-chip">{role}</span>
+          ))}
+          {openCount > 2 && <span className="open-role-chip more">+{openCount - 2}</span>}
         </div>
       )}
 
@@ -1180,8 +1157,10 @@ function ShiftDetailView({
             </strong>
           </div>
           <div className="stat-block">
-            <span>Readiness</span>
-            <strong>{shift.readiness}%</strong>
+            <span>Open</span>
+            <strong className={openCount > 0 ? 'warn' : 'good'}>
+              {openCount > 0 ? openCount : '—'}
+            </strong>
           </div>
           <div className="shift-progress-bar">
             <div className="shift-progress-fill" style={{ width: `${progress}%` }} />
@@ -1282,8 +1261,8 @@ function ShiftDetailView({
 
 function AIPanel({
   schedule, selectedShift, coachItems, resolvedCoachItems, nextMove, borrowMoves,
-  isLocked, canExport, onApplyRecommendation, onViewShift, onApplyNextMove,
-  onBorrow, onCollapse, onCopy, onCsv, onJson
+  isLocked, canExport, canGenerate, busy, onGenerate, onApplyRecommendation,
+  onViewShift, onApplyNextMove, onBorrow, onCollapse, onCopy, onCsv, onJson
 }) {
   return (
     <aside className="ai-panel">
@@ -1352,13 +1331,29 @@ function AIPanel({
           <h3>Quick Actions</h3>
           <div className="ai-action-grid">
             <button
-              disabled={isLocked || coachItems.length === 0}
-              onClick={() => coachItems[0] && onApplyRecommendation(coachItems[0])}
+              className="btn-primary"
+              disabled={busy || !canGenerate || isLocked}
+              onClick={onGenerate}
             >
-              Autofill Best Match
+              <RefreshCw size={13} /> {busy ? 'Building…' : 'Auto-Build Lineup'}
             </button>
-            <button disabled={isLocked} onClick={() => onApplyNextMove()}>
-              Apply Next Move
+            <button disabled={isLocked || !nextMove} onClick={() => onApplyNextMove()}>
+              Best Match
+            </button>
+            <button
+              disabled={isLocked || coachItems.filter(i => i.level !== 'good').length === 0}
+              onClick={() => {
+                const urgent = coachItems.find(i => i.level !== 'good');
+                if (urgent) onApplyRecommendation(urgent);
+              }}
+            >
+              Autofill Top Gap
+            </button>
+            <button
+              disabled={isLocked || !borrowMoves.length}
+              onClick={() => borrowMoves[0] && onBorrow(borrowMoves[0].employee)}
+            >
+              Use Borrowed Employee
             </button>
           </div>
         </div>
@@ -2110,6 +2105,13 @@ function evaluateFit(employee, shift, shifts) {
     return { tone: 'warning', message: `Missing ${shift.required_certification}` };
   if (employee.reliability_score >= 86) return { tone: 'strong', message: 'Strong fit' };
   return { tone: 'warning', message: 'Acceptable — compare alternatives' };
+}
+
+function shiftPeriod(shift) {
+  const h = parseInt(shift.start_time.split(':')[0], 10);
+  if (h < 12) return 'AM';
+  if (h < 17) return 'Mid';
+  return 'PM';
 }
 
 function shiftStatus(shift) {

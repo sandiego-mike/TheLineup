@@ -828,11 +828,25 @@ h1, h2, h3, h4 { line-height: 1.2; }
 
 .open-roles-indicator {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.68rem;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.open-role-chip {
+  font-size: 0.62rem;
   font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(239, 112, 89, 0.14);
   color: #ff9d8d;
+  border: 1px solid rgba(239, 112, 89, 0.22);
+  white-space: nowrap;
+}
+
+.open-role-chip.more {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  border-color: transparent;
 }
 
 .drop-indicator {
