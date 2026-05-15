@@ -435,6 +435,8 @@ export function App() {
         aiCollapsed={aiCollapsed}
         setAiCollapsed={setAiCollapsed}
         alertCount={activeCoachItems.filter(i => i.level !== 'good').length}
+        canGenerate={canGenerate}
+        busy={busy}
         onPublish={publish}
         onUnlock={unlockSchedule}
         canExport={canExport}
@@ -602,7 +604,7 @@ export function App() {
 function AppHeader({
   schedule, bootstrap, userId, setUserId, effectiveDepartment, departments,
   setDepartmentFilter, isLocked, aiCollapsed, setAiCollapsed, alertCount,
-  onPublish, onUnlock, canExport, onCsv, onJson, onCopy
+  canGenerate, busy, onPublish, onUnlock, canExport, onCsv, onJson, onCopy
 }) {
   const [showExport, setShowExport] = useState(false);
   const weekLabel = formatWeekLabel(schedule.schedule.week_start);
