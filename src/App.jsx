@@ -108,6 +108,7 @@ export function App() {
   const [highlightedShiftId, setHighlightedShiftId] = useState(null);
   const [employeeDayEdits, setEmployeeDayEdits] = useState(() => loadEmployeeDayEdits());
   const [pendingDrop, setPendingDrop] = useState(null);
+  const [showValidation, setShowValidation] = useState(false);
   const routeAppliedRef = useRef(false);
 
   useEffect(() => { loadAll(userId); }, [userId]);
@@ -402,6 +403,16 @@ export function App() {
     [schedule, selectedEmployeeId]
   );
 
+  const validation = useMemo(
+    () => (schedule ? validateWeeklyLineup(schedule, employeeStatuses, effectiveDepartment) : null),
+    [schedule, employeeStatuses, effectiveDepartment]
+  );
+
+  const nextAction = useMemo(
+    () => (validation && schedule ? computeNextAction(validation, schedule, effectiveDepartment) : ''),
+    [validation, schedule, effectiveDepartment]
+  );
+
   // ── Loading state ─────────────────────────────────────────────────
 
   if (!bootstrap || !schedule) {
@@ -458,6 +469,14 @@ export function App() {
           {lastUndo && <button onClick={undoLastRecommendation}>Undo</button>}
           <button onClick={() => setNotice(null)}><X size={14} /></button>
         </div>
+      )}
+
+      {validation && (
+        <StatusStrip
+          validation={validation}
+          nextAction={nextAction}
+          onCheckLineup={() => setShowValidation(true)}
+        />
       )}
 
       <div className="app-body">
@@ -591,6 +610,15 @@ export function App() {
             }
           </section>
         </div>
+      )}
+
+      {showValidation && validation && (
+        <ValidationModal
+          validation={validation}
+          schedule={schedule}
+          onClose={() => setShowValidation(false)}
+          onViewShift={shift => { setSelectedShiftId(shift.id); setShowValidation(false); }}
+        />
       )}
 
     </main>
@@ -1423,6 +1451,166 @@ function AICard({ item, onViewShift, onApply, isLocked }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// STATUS STRIP  (always-visible validation bar below header)
+// ══════════════════════════════════════════════════════════════════
+
+function StatusStrip({ validation, nextAction, onCheckLineup }) {
+  const { totalShifts, fullyStaffed, conflicts, nearOT, invalidAssignments, readyToExport } = validation;
+  const openCount = totalShifts - fullyStaffed;
+
+  return (
+    <div className="status-strip">
+      <div className="status-chips">
+        <span className={`status-chip ${fullyStaffed === totalShifts ? 'good' : 'warn'}`}>
+          {fullyStaffed === totalShifts ? '✓' : '⚠'} {fullyStaffed}/{totalShifts} staffed
+        </span>
+        {openCount > 0 && (
+          <span className="status-chip warn">⚠ {openCount} open</span>
+        )}
+        {conflicts.length > 0 && (
+          <span className="status-chip urgent">✗ {conflicts.length} conflict{conflicts.length > 1 ? 's' : ''}</span>
+        )}
+        {invalidAssignments.length > 0 && (
+          <span className="status-chip urgent">✗ {invalidAssignments.length} invalid</span>
+        )}
+        {nearOT.length > 0 && (
+          <span className="status-chip warn">⚠ {nearOT.length} OT risk</span>
+        )}
+        {readyToExport && (
+          <span className="status-chip good">✓ Export Ready</span>
+        )}
+      </div>
+
+      <div className="next-action-strip">
+        <span className="next-action-label">NEXT</span>
+        <span className="next-action-text">{nextAction}</span>
+      </div>
+
+      <button className="check-lineup-btn" onClick={onCheckLineup}>
+        <ShieldCheck size={13} /> Check Lineup
+      </button>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// VALIDATION MODAL
+// ══════════════════════════════════════════════════════════════════
+
+function ValidationModal({ validation, schedule, onClose, onViewShift }) {
+  const {
+    totalShifts, fullyStaffed, empty, conflicts,
+    nearOT, invalidAssignments, openRoleIssues, readyToExport
+  } = validation;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="validation-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <h2>Weekly Lineup Status</h2>
+            <p style={{ marginTop: 3, fontSize: '0.82rem', color: 'var(--muted)' }}>
+              {readyToExport ? 'All checks passed — ready to publish and export' : 'Review issues before exporting'}
+            </p>
+          </div>
+          <button className="btn-icon" onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div className="validation-checklist">
+          <CheckRow ok={fullyStaffed === totalShifts} label={`${fullyStaffed} / ${totalShifts} shifts fully staffed`} />
+          <CheckRow ok={empty === 0} warn={empty > 0} label={`${empty} empty shift${empty !== 1 ? 's' : ''}`} />
+          <CheckRow ok={conflicts.length === 0} label={`${conflicts.length} scheduling conflict${conflicts.length !== 1 ? 's' : ''}`} />
+          <CheckRow ok={nearOT.length === 0} warn={nearOT.length > 0} label={`${nearOT.length} employee${nearOT.length !== 1 ? 's' : ''} near overtime`} />
+          <CheckRow ok={invalidAssignments.length === 0} label={`${invalidAssignments.length} invalid assignment${invalidAssignments.length !== 1 ? 's' : ''} (PTO / sick)`} />
+          <CheckRow ok={readyToExport} strong label={`Ready to Export: ${readyToExport ? 'YES ✓' : 'NO'}`} />
+        </div>
+
+        {openRoleIssues.length > 0 && (
+          <div className="validation-section">
+            <h3>Open Roles</h3>
+            {openRoleIssues.map(issue => (
+              <div
+                key={issue.shift.id}
+                className="validation-issue"
+                onClick={() => onViewShift(issue.shift)}
+                title="Click to open shift"
+              >
+                <div className="issue-header">
+                  <span className={`period-pill period-${shiftPeriod(issue.shift).toLowerCase()}`}>
+                    {shiftPeriod(issue.shift)}
+                  </span>
+                  <strong>{issue.shift.day}</strong>
+                  <span className="issue-time">{formatShiftTime(issue.shift)}</span>
+                </div>
+                <div className="issue-roles">
+                  {issue.openRoles.map(r => (
+                    <span key={r} className="missing-role-chip">{r}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {conflicts.length > 0 && (
+          <div className="validation-section">
+            <h3>Schedule Conflicts</h3>
+            {conflicts.map((c, i) => (
+              <div key={i} className="validation-issue urgent">
+                <strong>{c.employee.name}</strong>
+                <span>{c.first.name} overlaps {c.second.name} on {c.first.day}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {nearOT.length > 0 && (
+          <div className="validation-section">
+            <h3>Overtime Risk</h3>
+            {nearOT.map(emp => (
+              <div key={emp.id} className="validation-issue warn">
+                <strong>{emp.name}</strong>
+                <span>{assignedHours(schedule.shifts, emp.id)}h scheduled / {emp.max_hours_per_week}h max</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {invalidAssignments.length > 0 && (
+          <div className="validation-section">
+            <h3>Invalid Assignments</h3>
+            {invalidAssignments.map(ia => (
+              <div key={ia.employee.id} className="validation-issue urgent">
+                <strong>{ia.employee.name}</strong>
+                <span>Marked {ia.status.label} but assigned to {ia.shifts.length} shift{ia.shifts.length > 1 ? 's' : ''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {readyToExport && openRoleIssues.length === 0 && conflicts.length === 0 && nearOT.length === 0 && (
+          <div className="validation-all-clear">
+            <span>✓</span>
+            <p>Lineup is complete and validated. Safe to publish and export.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CheckRow({ ok, warn, label, strong }) {
+  const cls = ok ? 'good' : warn ? 'warn' : 'urgent';
+  const icon = ok ? '✓' : warn ? '⚠' : '✗';
+  return (
+    <div className={`check-row ${cls}${strong ? ' strong' : ''}`}>
+      <span className="check-icon">{icon}</span>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 // ROLE PICKER MODAL
 // ══════════════════════════════════════════════════════════════════
 
@@ -1740,6 +1928,81 @@ function AvailabilityStrip({ availability }) {
       })}
     </div>
   );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// VALIDATION ENGINE
+// ══════════════════════════════════════════════════════════════════
+
+function validateWeeklyLineup(schedule, employeeStatuses, effectiveDepartment) {
+  const deptShifts = schedule.shifts.filter(s => s.name === effectiveDepartment);
+  const totalShifts = deptShifts.length;
+  const fullyStaffed = deptShifts.filter(s => s.assignments.length >= s.required_count).length;
+  const empty = deptShifts.filter(s => s.assignments.length === 0).length;
+
+  const allConflicts = detectShiftConflicts(schedule);
+  const conflicts = allConflicts.filter(c =>
+    deptShifts.some(s => s.id === c.first.id || s.id === c.second.id)
+  );
+
+  const teamIds = new Set(deptShifts.flatMap(s => s.assignments.map(a => a.employee_id)));
+  const nearOT = schedule.employees.filter(e => {
+    if (!teamIds.has(e.id)) return false;
+    const h = assignedHours(schedule.shifts, e.id);
+    return h > 0 && h >= e.max_hours_per_week * 0.85;
+  });
+
+  const invalidAssignments = [];
+  for (const [idText, status] of Object.entries(employeeStatuses)) {
+    if (!status || !['sick', 'pto', 'vacation', 'off', 'unavailable', 'holiday'].includes(status.key)) continue;
+    const employeeId = Number(idText);
+    const employee = schedule.employees.find(e => e.id === employeeId);
+    if (!employee) continue;
+    const affected = deptShifts.filter(s => s.assignments.some(a => a.employee_id === employeeId));
+    if (affected.length > 0) invalidAssignments.push({ employee, status, shifts: affected });
+  }
+
+  const openRoleIssues = deptShifts
+    .filter(s => s.assignments.length < s.required_count)
+    .map(s => ({
+      shift: s,
+      openCount: s.required_count - s.assignments.length,
+      openRoles: buildSlots(s).slice(s.assignments.length)
+    }));
+
+  const readyToExport = fullyStaffed === totalShifts && conflicts.length === 0 && invalidAssignments.length === 0;
+
+  return {
+    totalShifts, fullyStaffed, empty,
+    partial: totalShifts - fullyStaffed - empty,
+    conflicts, nearOT, invalidAssignments, openRoleIssues, readyToExport
+  };
+}
+
+function computeNextAction(validation, schedule, effectiveDepartment) {
+  if (validation.invalidAssignments.length > 0) {
+    const ia = validation.invalidAssignments[0];
+    return `Remove ${ia.employee.name} from shifts — currently marked ${ia.status.label}`;
+  }
+  if (validation.conflicts.length > 0) {
+    const c = validation.conflicts[0];
+    return `Fix conflict: ${c.employee.name} is double-booked on ${c.first.day}`;
+  }
+  const emptyShift = schedule.shifts.find(s => s.assignments.length === 0 && s.name === effectiveDepartment);
+  if (emptyShift) {
+    return `Build ${emptyShift.day} ${shiftPeriod(emptyShift)} lineup — nothing assigned yet`;
+  }
+  if (validation.openRoleIssues.length > 0) {
+    const top = [...validation.openRoleIssues].sort((a, b) => b.openCount - a.openCount)[0];
+    return `Fill ${top.shift.day} ${shiftPeriod(top.shift)} — ${top.openRoles[0]} needed (${top.openCount} open)`;
+  }
+  if (validation.nearOT.length > 0) {
+    return `${validation.nearOT[0].name} is near overtime — review or balance hours`;
+  }
+  if (validation.readyToExport) {
+    return 'Lineup complete — publish and export when ready';
+  }
+  return 'Review lineup and run Check Lineup to validate';
 }
 
 // ══════════════════════════════════════════════════════════════════
